@@ -1,0 +1,21 @@
+# Logs and diagnostics
+Logs/
+*.log
+*.json
+*.reg
+sample_audit.json
+
+# Local backups and safety checkpoints
+Backups/
+*.bak
+
+# Windows Explorer artifacts
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# IDE and editor settings
+.vscode/
+.idea/
+*.suo
+*.user
