@@ -76,11 +76,14 @@
 ### Option 1: 1-Click Interactive Menu (Recommended)
 1. Right-click **`Run-WinSentinel.bat`** and select **"Run as administrator"**.
 2. Select your desired operation from the interactive menu:
-   * `[1]` Run Non-Destructive System Audit
-   * `[2]` Apply Full System Hardening & Bloatware Purge
-   * `[3]` Create Safety Backup (Registry & Restore Point)
-   * `[4]` Neutralize Audio & Microphone Hooks Only
-   * `[5]` Apply Device Metadata & Companion App Firewall Block Only
+   * `[1]` Run Non-Destructive System Audit (Calculates Hardening Score)
+   * `[2]` Apply Full System Hardening & Bloatware Purge (All 10+ Vectors)
+   * `[3]` Block Future Bloatware, Store Pushes & Device Metadata (Anti-Bloat Lockdown)
+   * `[4]` Purge Installed & Provisioned Bloatware Apps Only
+   * `[5]` Neutralize Audio & Microphone Hooks Only (Nahimic / IgoAudio / SoundTune)
+   * `[6]` Apply Device Metadata & Companion App Firewall Block Only (DMRClient)
+   * `[7]` Create Safety Backup (System Restore Point & Registry Archives)
+   * `[0]` Exit
 
 ---
 
@@ -89,6 +92,26 @@
 #### Run a Non-Destructive System Audit:
 ```powershell
 .\WinSentinel.ps1 -AuditOnly
+```
+
+#### Block Future Bloatware, Silent Store Downloads & Companion Apps:
+```powershell
+.\WinSentinel.ps1 -BlockBloatware -Backup
+```
+
+#### Purge Installed & Staged Bloatware Packages (AppX & Provisioned Images):
+```powershell
+.\WinSentinel.ps1 -PurgeBloatware
+```
+
+#### Block Device Companion Apps & DMRClient at Firewall:
+```powershell
+.\WinSentinel.ps1 -BlockCompanionApps
+```
+
+#### Neutralize OEM Audio & Microphone Interception Services Only:
+```powershell
+.\WinSentinel.ps1 -NeutralizeAudio
 ```
 
 #### Run Full System Hardening with Automatic Safety Backup:

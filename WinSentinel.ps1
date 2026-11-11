@@ -13,12 +13,29 @@
     and persistent file logging.
 
 .PARAMETER AuditOnly
-    Runs a non-destructive audit scan across all 10 security/privacy vectors without
+    Runs a non-destructive audit scan across all security and privacy vectors without
     modifying system configuration. Outputs a scored compliance report.
 
 .PARAMETER RemediateAll
     Executes full system lockdown, neutralizing all identified telemetry collectors,
     OEM audio hooks, scheduled inventory scanners, and consumer bloatware.
+
+.PARAMETER BlockBloatware
+    Applies comprehensive policies and firewall rules to permanently block silent Store
+    app pushes, Cloud Consumer features, OEM companion apps (e.g. LG Monitor App),
+    advertising IDs, and deprovisions bloatware staging.
+
+.PARAMETER PurgeBloatware
+    Uninstalls identified consumer bloatware packages from the current user account
+    and deprovisions them from the Windows online image to prevent reinstallation.
+
+.PARAMETER BlockCompanionApps
+    Configures Device Metadata policies and an outbound Windows Defender Firewall rule
+    to prevent DMRClient from querying Microsoft servers and auto-pushing OEM apps.
+
+.PARAMETER NeutralizeAudio
+    Stops, disables, and neutralizes OEM background audio and voice interception
+    services and Audio Processing Objects (Nahimic, intelliGo, MSI Sound Tune).
 
 .PARAMETER Backup
     Creates a System Restore Point (if supported by OS edition) and exports targeted
@@ -40,12 +57,12 @@
     Runs an audit scan, displays a scored summary in the console, and writes to log.
 
 .EXAMPLE
-    .\WinSentinel.ps1 -RemediateAll -Backup
-    Creates a safety backup and executes complete system hardening.
+    .\WinSentinel.ps1 -BlockBloatware -Backup
+    Creates a backup and permanently blocks silent bloatware, store pushes, and companion apps.
 
 .EXAMPLE
-    .\WinSentinel.ps1 -AuditOnly -ExportReport "C:\Reports\Audit.json" -Silent
-    Runs a headless audit, exports findings to JSON, and writes execution logs.
+    .\WinSentinel.ps1 -RemediateAll -Backup
+    Creates a safety backup and executes complete system hardening.
 
 .OUTPUTS
     System.Management.Automation.PSCustomObject containing audit results and compliance metrics.
@@ -53,7 +70,7 @@
 .NOTES
     Author:       WinSentinel Contributors
     License:      MIT License
-    Version:      2.0.0
+    Version:      2.1.0
     Requirements: PowerShell 5.1 or PowerShell 7+ running on Windows 10, 11, or Server.
 #>
 
@@ -61,6 +78,10 @@
 param(
     [switch]$AuditOnly,
     [switch]$RemediateAll,
+    [switch]$BlockBloatware,
+    [switch]$PurgeBloatware,
+    [switch]$BlockCompanionApps,
+    [switch]$NeutralizeAudio,
     [switch]$Backup,
     [string]$LogPath,
     [string]$ExportReport,
@@ -143,6 +164,41 @@ function Write-Log {
     }
 }
 
+# Master List of Known Consumer Bloatware and Companion Apps
+$script:DefaultBloatwareList = @(
+    # Vendor companion apps & silent hardware pushers
+    "LGElectronics.LGMonitorApp",
+    "RivetNetworks.KillerControlCenter",
+    "AppUp.IntelOptaneMemoryandStorageManagement",
+    
+    # Pre-installed ad & sponsored consumer apps
+    "Microsoft.MicrosoftSolitaireCollection",
+    "Microsoft.BingTranslator",
+    "Microsoft.GetHelp",
+    "Microsoft.PowerAutomateDesktop",
+    "Microsoft.StartExperiencesApp",
+    "Microsoft.YourPhone",
+    "MicrosoftWindows.CrossDevice",
+    "Clipchamp.Clipchamp",
+    "Microsoft.549981C3F5F10",
+    "Microsoft.BingNews",
+    "Microsoft.BingWeather",
+    "Microsoft.BingSports",
+    "Microsoft.BingFinance",
+    "Microsoft.Todos",
+    "Microsoft.People",
+    "Microsoft.Microsoft3DViewer",
+    "Microsoft.MixedReality.Portal",
+    "Microsoft.WindowsFeedbackHub",
+    
+    # Third-party OEM sponsored bundles (if present)
+    "SpotifyAB.SpotifyMusic",
+    "BytedancePte.Ltd.TikTok",
+    "Disney.37853FC22B2CE",
+    "king.com.CandyCrushSaga",
+    "king.com.CandyCrushSodaSaga"
+)
+
 # ==============================================================================
 # 2. SYSTEM ARCHITECTURE & ENVIRONMENT DETECTION
 # ==============================================================================
@@ -222,7 +278,7 @@ function Invoke-SystemBackup {
         return $false
     }
 
-    # 1. System Restore Point
+    # 1. System Restore Point (Supported on Windows 10/11 client editions)
     try {
         Write-Log -Message "Attempting to create a Windows System Restore Point..." -Level INFO
         Start-Service -Name "srservice" -ErrorAction SilentlyContinue
@@ -238,10 +294,12 @@ function Invoke-SystemBackup {
         "HKLM\SOFTWARE\Policies\Microsoft\Windows\CloudContent",
         "HKLM\SOFTWARE\Policies\Microsoft\WindowsStore",
         "HKLM\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Settings",
+        "HKLM\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo",
         "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Metadata",
         "HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching",
         "HKCU\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager",
         "HKCU\Software\Microsoft\Windows\CurrentVersion\Search",
+        "HKCU\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo",
         "HKCU\Software\Microsoft\InputPersonalization",
         "HKCU\System\GameConfigStore"
     )
@@ -264,8 +322,252 @@ function Invoke-SystemBackup {
     return $true
 }
 
+# Helper function for safe registry modification
+function Set-RegistryValueSafe {
+    param(
+        [string]$Path,
+        [string]$Name,
+        [object]$Value,
+        [string]$Type = "DWord"
+    )
+    try {
+        if (-not (Test-Path $Path)) {
+            New-Item -Path $Path -Force -ErrorAction Stop | Out-Null
+        }
+        Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type $Type -ErrorAction Stop | Out-Null
+        Write-Log -Message "Registry: Set $Path\$Name = $Value" -Level DEBUG
+    } catch {
+        Write-Log -Message "Failed setting registry $Path\$Name : $($_.Exception.Message)" -Level WARN
+    }
+}
+
 # ==============================================================================
-# 4. AUDIT ENGINE
+# 4. MODULAR REMEDIATION COMPONENTS
+# ==============================================================================
+
+# Sub-module: Block Device Companion Apps & Metadata Retrieval
+function Invoke-BlockCompanionApps {
+    [CmdletBinding()]
+    param()
+
+    Write-Log -Message "Configuring Device Metadata & Automatic Companion App blocks..." -Level INFO
+    
+    # 1. Registry Policies
+    Set-RegistryValueSafe "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Metadata" "PreventDeviceMetadataFromNetwork" 1
+    Set-RegistryValueSafe "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Settings" "DisableCoInstallers" 1
+    Set-RegistryValueSafe "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching" "DontSearchWindowsUpdate" 1
+
+    # 2. Outbound DMRClient Firewall Rule
+    try {
+        $ruleName = "Block-Windows-Device-Metadata-Retrieval"
+        $existingRule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
+        if (-not $existingRule) {
+            New-NetFirewallRule -DisplayName $ruleName `
+                -Direction Outbound `
+                -Program "%SystemRoot%\System32\DMRClient.exe" `
+                -Action Block `
+                -Profile Any `
+                -Description "WinSentinel: Blocks automatic vendor companion app retrieval from Microsoft Store when hardware is connected." -ErrorAction Stop | Out-Null
+            Write-Log -Message "Created outbound firewall block rule for DMRClient.exe" -Level SUCCESS
+        } else {
+            Write-Log -Message "Firewall block rule for DMRClient.exe already active." -Level DEBUG
+        }
+    } catch {
+        Write-Log -Message "Firewall rule configuration notice: $($_.Exception.Message)" -Level WARN
+    }
+
+    Write-Log -Message "Device companion app retrieval blocked successfully." -Level SUCCESS
+}
+
+# Sub-module: Purge Bloatware (Installed and Provisioned Images)
+function Invoke-PurgeBloatware {
+    [CmdletBinding()]
+    param(
+        [string[]]$PackageList = $script:DefaultBloatwareList
+    )
+
+    $osInfo = Get-OperatingSystemInfo
+    Write-Log -Message "Scanning for consumer bloatware packages to purge on $($osInfo.OSFamily)..." -Level INFO
+
+    $hasAppxCmdlet = Get-Command Get-AppxPackage -ErrorAction SilentlyContinue
+    if (-not $hasAppxCmdlet) {
+        Write-Log -Message "AppX package manager cmdlets are not available on this OS installation (typical on Windows Server Core)." -Level INFO
+        return
+    }
+
+    $removedCount = 0
+    foreach ($pkg in $PackageList) {
+        # 1. Remove from current user profile
+        try {
+            $userPkgs = Get-AppxPackage "*$pkg*" -ErrorAction SilentlyContinue
+            if ($userPkgs) {
+                foreach ($up in $userPkgs) {
+                    Write-Log -Message "Removing user package: $($up.Name)..." -Level INFO
+                    Remove-AppxPackage -Package $up.PackageFullName -ErrorAction Stop
+                    $removedCount++
+                    Write-Log -Message "Successfully removed: $($up.Name)" -Level SUCCESS
+                }
+            }
+        } catch {
+            Write-Log -Message "Could not remove user package ${pkg}: $($_.Exception.Message)" -Level DEBUG
+        }
+
+        # 2. Deprovision from online system image (stops installation for any new profiles)
+        try {
+            $provCmd = Get-Command Get-AppxProvisionedPackage -ErrorAction SilentlyContinue
+            if ($provCmd) {
+                $provPkgs = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$pkg*" }
+                if ($provPkgs) {
+                    foreach ($pp in $provPkgs) {
+                        Write-Log -Message "Deprovisioning system image package: $($pp.DisplayName)..." -Level INFO
+                        Remove-AppxProvisionedPackage -Online -PackageName $pp.PackageName -ErrorAction Stop | Out-Null
+                        $removedCount++
+                        Write-Log -Message "Successfully deprovisioned: $($pp.DisplayName)" -Level SUCCESS
+                    }
+                }
+            }
+        } catch {
+            Write-Log -Message "Could not deprovision package ${pkg}: $($_.Exception.Message)" -Level DEBUG
+        }
+    }
+
+    if ($removedCount -gt 0) {
+        Write-Log -Message "Bloatware purge completed: $removedCount packages/images removed." -Level SUCCESS
+    } else {
+        Write-Log -Message "Bloatware scan completed: No targeted bloatware packages found." -Level SUCCESS
+    }
+}
+
+# Sub-module: Neutralize Audio & Microphone Interception Hooks
+function Invoke-NeutralizeAudio {
+    [CmdletBinding()]
+    param()
+
+    Write-Log -Message "Disabling OEM audio and microphone interception services..." -Level INFO
+
+    $audioServices = @("NahimicService", "IgoAudioService")
+    foreach ($asvc in $audioServices) {
+        try {
+            $svc = Get-Service -Name $asvc -ErrorAction SilentlyContinue
+            if ($svc) {
+                Stop-Service -Name $asvc -Force -ErrorAction SilentlyContinue
+                Set-Service -Name $asvc -StartupType Disabled -ErrorAction SilentlyContinue
+                Write-Log -Message "Service stopped and disabled: $asvc" -Level SUCCESS
+            }
+        } catch {
+            Write-Log -Message "Audio service ${asvc}: $($_.Exception.Message)" -Level DEBUG
+        }
+    }
+
+    $audioProcesses = @("NahimicService.exe", "NahimicSvc64.exe", "NahimicAPO4Volume.exe", "nahimicNotifSys.exe", "IgoAudioService_x64.exe", "SoundTune.exe")
+    foreach ($aproc in $audioProcesses) {
+        try {
+            $procs = Get-Process -Name ($aproc -replace '\.exe$', '') -ErrorAction SilentlyContinue
+            if ($procs) {
+                & taskkill.exe /F /IM $aproc /T 2>$null | Out-Null
+                Write-Log -Message "Terminated background process: $aproc" -Level SUCCESS
+            }
+        } catch {
+            # Ignore process already stopped
+        }
+    }
+
+    # Neutralize user-space Nahimic notification daemon if present
+    $userNh = "$env:LOCALAPPDATA\NhNotifSys\nahimic\nahimicNotifSys.exe"
+    if (Test-Path $userNh) {
+        try {
+            Rename-Item -Path $userNh -NewName "nahimicNotifSys.exe.disabled" -Force -ErrorAction Stop
+            Write-Log -Message "Neutralized executable: $userNh" -Level SUCCESS
+        } catch {
+            Write-Log -Message "Could not rename ${userNh}: $($_.Exception.Message)" -Level DEBUG
+        }
+    }
+
+    Write-Log -Message "Audio and microphone interception hooks successfully neutralized." -Level SUCCESS
+}
+
+# Sub-module: Block Future Bloatware, Store Pushes & Consumer Cloud Features
+function Invoke-BlockFutureBloatware {
+    [CmdletBinding()]
+    param()
+
+    Write-Log -Message "Enforcing anti-bloatware policies, silent Store blocks, and consumer lockdowns..." -Level INFO
+
+    # 1. Device Metadata and Companion App blocks
+    Invoke-BlockCompanionApps
+
+    # 2. Cloud Consumer Features & Sponsored Apps
+    Set-RegistryValueSafe "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableWindowsConsumerFeatures" 1
+    Set-RegistryValueSafe "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableCloudOptimizedContent" 1
+
+    # 3. Content Delivery Manager Policies (Start Menu ads, suggestions, SCOOBE)
+    $cdmSettings = @{
+        "SoftLandingEnabled"               = 0
+        "SubscribedContent-310093Enabled"  = 0
+        "SubscribedContent-338387Enabled"  = 0
+        "SubscribedContent-338388Enabled"  = 0
+        "SubscribedContent-338389Enabled"  = 0
+        "SystemPaneSuggestionsEnabled"     = 0
+        "RotatingLockScreenOverlayEnabled" = 0
+        "SilentInstalledAppsEnabled"       = 0
+        "OemPreInstalledAppsEnabled"       = 0
+        "PreInstalledAppsEnabled"          = 0
+        "PreInstalledAppsEverEnabled"      = 0
+    }
+    foreach ($k in $cdmSettings.Keys) {
+        Set-RegistryValueSafe "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" $k $cdmSettings[$k]
+    }
+
+    # 4. SCOOBE ("Finish Setting Up Your PC") Fullscreen Prompts
+    Set-RegistryValueSafe "HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement" "ScoobeSystemSettingEnabled" 0
+
+    # 5. Microsoft Store Silent Auto-Downloads
+    Set-RegistryValueSafe "HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore" "AutoDownload" 2
+
+    # 6. Windows Advertising ID Tracking
+    Set-RegistryValueSafe "HKCU:\Software\Microsoft\Windows\CurrentVersion\AdvertisingInfo" "Enabled" 0
+    Set-RegistryValueSafe "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" "DisabledByGroupPolicy" 1
+
+    # 7. Microsoft Edge Startup Boost & Background Execution
+    try {
+        Remove-ItemProperty -Path "HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run" -Name "MicrosoftEdgeAutoLaunch_*" -ErrorAction SilentlyContinue
+        $prefPath = "$env:LOCALAPPDATA\Microsoft\Edge\User Data\Default\Preferences"
+        if (Test-Path $prefPath) {
+            $jsonContent = Get-Content $prefPath -Raw | ConvertFrom-Json
+            if (-not $jsonContent.startup_boost) {
+                $jsonContent | Add-Member -MemberType NoteProperty -Name "startup_boost" -Value ([PSCustomObject]@{ enabled = $false })
+            } else {
+                $jsonContent.startup_boost.enabled = $false
+            }
+            if (-not $jsonContent.background_mode) {
+                $jsonContent | Add-Member -MemberType NoteProperty -Name "background_mode" -Value ([PSCustomObject]@{ enabled = $false })
+            } else {
+                $jsonContent.background_mode.enabled = $false
+            }
+            $jsonContent | ConvertTo-Json -Depth 100 -Compress | Set-Content $prefPath -Encoding UTF8
+            Write-Log -Message "Disabled Edge Startup Boost and background preload in user preferences." -Level SUCCESS
+        }
+    } catch {
+        Write-Log -Message "Edge preference configuration notice: $($_.Exception.Message)" -Level DEBUG
+    }
+
+    # 8. Phone Link / Cross-Device Background Relay
+    try {
+        Get-Process -Name "CrossDeviceResume" -ErrorAction SilentlyContinue | Stop-Process -Force
+        Set-RegistryValueSafe "HKCU:\Software\Microsoft\Windows\CurrentVersion\SharedExperiences" "CdpSessionUserAuthzPolicy" 0
+        Set-RegistryValueSafe "HKCU:\Software\Microsoft\Windows\CurrentVersion\SharedExperiences" "RomeSdkChannelUserAuthzPolicy" 0
+    } catch {
+        Write-Log -Message "Cross-Device configuration notice: $($_.Exception.Message)" -Level DEBUG
+    }
+
+    # 9. Purge any currently staged/installed bloatware packages
+    Invoke-PurgeBloatware
+
+    Write-Log -Message "Anti-bloatware lockdown applied successfully." -Level SUCCESS
+}
+
+# ==============================================================================
+# 5. AUDIT ENGINE
 # ==============================================================================
 
 function Invoke-SystemAudit {
@@ -277,7 +579,6 @@ function Invoke-SystemAudit {
 
     $results = [System.Collections.Generic.List[PSObject]]::new()
 
-    # Helper function to encapsulate check exception handling
     function Add-AuditCheck {
         param(
             [string]$Category,
@@ -347,13 +648,19 @@ function Invoke-SystemAudit {
         return ($val -eq 2)
     }
 
-    # 8. Contact & Typing Harvesting
+    # 8. Advertising ID Profiling
+    Add-AuditCheck "Ad Profiling" "Windows Advertising ID Policy" {
+        $val = (Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\AdvertisingInfo" -Name "DisabledByGroupPolicy" -ErrorAction SilentlyContinue).DisabledByGroupPolicy
+        return ($val -eq 1)
+    }
+
+    # 9. Contact & Typing Harvesting
     Add-AuditCheck "Privacy" "Contact & Typing Telemetry Harvesting" {
         $val = (Get-ItemProperty "HKCU:\Software\Microsoft\InputPersonalization\TrainedDataStore" -Name "HarvestContacts" -ErrorAction SilentlyContinue).HarvestContacts
         return ($val -eq 0)
     }
 
-    # 9. GameDVR & Display Hooks (Client OS only)
+    # 10. GameDVR & Display Hooks (Client OS only)
     if (-not $osInfo.IsServer) {
         Add-AuditCheck "Display Hooks" "Windows GameDVR Background Capture" {
             $val = (Get-ItemProperty "HKCU:\System\GameConfigStore" -Name "GameDVR_Enabled" -ErrorAction SilentlyContinue).GameDVR_Enabled
@@ -361,12 +668,27 @@ function Invoke-SystemAudit {
         }
     }
 
-    # 10. OEM Audio / Voice Interception Services
+    # 11. OEM Audio / Voice Interception Services
     Add-AuditCheck "Audio Interception" "OEM Voice Processing / Audio Hooks" {
         $nahimic = Get-Service -Name "NahimicService" -ErrorAction SilentlyContinue
         $igo = Get-Service -Name "IgoAudioService" -ErrorAction SilentlyContinue
         $soundTune = Get-Process -Name "SoundTune" -ErrorAction SilentlyContinue
         return (-not (($nahimic -and $nahimic.Status -eq "Running") -or ($igo -and $igo.Status -eq "Running") -or ($soundTune -ne $null)))
+    }
+
+    # 12. Installed Consumer Bloatware
+    Add-AuditCheck "Bloatware" "Staged Consumer Bloatware Check" {
+        if (Get-Command Get-AppxPackage -ErrorAction SilentlyContinue) {
+            $foundAny = $false
+            foreach ($b in $script:DefaultBloatwareList) {
+                if (Get-AppxPackage "*$b*" -ErrorAction SilentlyContinue) {
+                    $foundAny = $true
+                    break
+                }
+            }
+            return (-not $foundAny)
+        }
+        return $true
     }
 
     # Output Table Formatting
@@ -386,7 +708,7 @@ function Invoke-SystemAudit {
         try {
             $reportData = [ordered]@{
                 ToolName        = "WinSentinel Enterprise"
-                Version         = "2.0.0"
+                Version         = "2.1.0"
                 OperatingSystem = $osInfo
                 AuditTimestamp  = (Get-Date).ToString("yyyy-MM-dd HH:mm:ss")
                 HardeningScore  = "$score%"
@@ -408,7 +730,7 @@ function Invoke-SystemAudit {
 }
 
 # ==============================================================================
-# 5. REMEDIATION & HARDENING ENGINE
+# 6. FULL SYSTEM REMEDIATION ENGINE
 # ==============================================================================
 
 function Invoke-SystemRemediation {
@@ -421,29 +743,10 @@ function Invoke-SystemRemediation {
     }
 
     $osInfo = Get-OperatingSystemInfo
-    Write-Log -Message "Starting system remediation for target: $($osInfo.Caption)" -Level INFO
-
-    # Helper function for safe registry modification
-    function Set-RegistryValueSafe {
-        param(
-            [string]$Path,
-            [string]$Name,
-            [object]$Value,
-            [string]$Type = "DWord"
-        )
-        try {
-            if (-not (Test-Path $Path)) {
-                New-Item -Path $Path -Force -ErrorAction Stop | Out-Null
-            }
-            Set-ItemProperty -Path $Path -Name $Name -Value $Value -Type $Type -ErrorAction Stop | Out-Null
-            Write-Log -Message "Registry: Set $Path\$Name = $Value" -Level DEBUG
-        } catch {
-            Write-Log -Message "Failed setting registry $Path\$Name : $($_.Exception.Message)" -Level WARN
-        }
-    }
+    Write-Log -Message "Starting full system remediation for target: $($osInfo.Caption)" -Level INFO
 
     # 1. Telemetry Services
-    Write-Log -Message "[1/8] Stopping and disabling core OS telemetry services..." -Level INFO
+    Write-Log -Message "[1/6] Stopping and disabling core OS telemetry services..." -Level INFO
     $services = @("DiagTrack", "dmwappushservice", "DPS", "PcaSvc")
     foreach ($svcName in $services) {
         try {
@@ -462,7 +765,7 @@ function Invoke-SystemRemediation {
     }
 
     # 2. Scheduled Inventory & CEIP Tasks
-    Write-Log -Message "[2/8] Disabling deep system inventory & CEIP scheduled tasks..." -Level INFO
+    Write-Log -Message "[2/6] Disabling deep system inventory & CEIP scheduled tasks..." -Level INFO
     $scheduledTasks = @(
         @("\Microsoft\Windows\Application Experience\", "Microsoft Compatibility Appraiser"),
         @("\Microsoft\Windows\Application Experience\", "ProgramDataUpdater"),
@@ -486,100 +789,16 @@ function Invoke-SystemRemediation {
         }
     }
 
-    # 3. Block Device Metadata & Companion Pushes
-    Write-Log -Message "[3/8] Enforcing Device Metadata & Co-Installer blocks..." -Level INFO
-    Set-RegistryValueSafe "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Metadata" "PreventDeviceMetadataFromNetwork" 1
-    Set-RegistryValueSafe "HKLM:\SOFTWARE\Policies\Microsoft\Windows\DeviceInstall\Settings" "DisableCoInstallers" 1
-    Set-RegistryValueSafe "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\DriverSearching" "DontSearchWindowsUpdate" 1
+    # 3. Anti-Bloatware Policies, Store Locks & Device Metadata
+    Write-Log -Message "[3/6] Applying anti-bloatware policies and silent store locks..." -Level INFO
+    Invoke-BlockFutureBloatware
 
-    # Outbound DMRClient Firewall Rule
-    try {
-        $ruleName = "Block-Windows-Device-Metadata-Retrieval"
-        $rule = Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue
-        if (-not $rule) {
-            New-NetFirewallRule -DisplayName $ruleName `
-                -Direction Outbound `
-                -Program "%SystemRoot%\System32\DMRClient.exe" `
-                -Action Block `
-                -Profile Any `
-                -Description "WinSentinel: Blocks automatic vendor companion app retrieval." -ErrorAction Stop | Out-Null
-            Write-Log -Message "Firewall outbound block rule applied for DMRClient.exe" -Level SUCCESS
-        } else {
-            Write-Log -Message "Firewall block rule already verified active." -Level DEBUG
-        }
-    } catch {
-        Write-Log -Message "Firewall rule creation failed: $($_.Exception.Message)" -Level WARN
-    }
+    # 4. Audio & Microphone Interception Hooks
+    Write-Log -Message "[4/6] Disabling proprietary OEM audio interception services..." -Level INFO
+    Invoke-NeutralizeAudio
 
-    # 4. Block Cloud Consumer Pushes & Content Delivery Bloat
-    Write-Log -Message "[4/8] Neutralizing Cloud Consumer experiences and SCOOBE takeovers..." -Level INFO
-    Set-RegistryValueSafe "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableWindowsConsumerFeatures" 1
-    Set-RegistryValueSafe "HKLM:\SOFTWARE\Policies\Microsoft\Windows\CloudContent" "DisableCloudOptimizedContent" 1
-    Set-RegistryValueSafe "HKCU:\Software\Microsoft\Windows\CurrentVersion\UserProfileEngagement" "ScoobeSystemSettingEnabled" 0
-
-    $cdmSettings = @{
-        "SoftLandingEnabled"               = 0
-        "SubscribedContent-310093Enabled"  = 0
-        "SubscribedContent-338387Enabled"  = 0
-        "SubscribedContent-338388Enabled"  = 0
-        "SubscribedContent-338389Enabled"  = 0
-        "SystemPaneSuggestionsEnabled"     = 0
-        "RotatingLockScreenOverlayEnabled" = 0
-        "SilentInstalledAppsEnabled"       = 0
-        "OemPreInstalledAppsEnabled"       = 0
-        "PreInstalledAppsEnabled"          = 0
-        "PreInstalledAppsEverEnabled"      = 0
-    }
-    foreach ($k in $cdmSettings.Keys) {
-        Set-RegistryValueSafe "HKCU:\Software\Microsoft\Windows\CurrentVersion\ContentDeliveryManager" $k $cdmSettings[$k]
-    }
-
-    # 5. Disable Store Silent Auto-Downloads
-    Write-Log -Message "[5/8] Locking down Microsoft Store silent background pushes..." -Level INFO
-    Set-RegistryValueSafe "HKLM:\SOFTWARE\Policies\Microsoft\WindowsStore" "AutoDownload" 2
-
-    # 6. Neutralize Audio & Microphone Interception Hooks
-    Write-Log -Message "[6/8] Disabling proprietary OEM audio interception services..." -Level INFO
-    $audioServices = @("NahimicService", "IgoAudioService")
-    foreach ($asvc in $audioServices) {
-        try {
-            $svc = Get-Service -Name $asvc -ErrorAction SilentlyContinue
-            if ($svc) {
-                Stop-Service -Name $asvc -Force -ErrorAction SilentlyContinue
-                Set-Service -Name $asvc -StartupType Disabled -ErrorAction SilentlyContinue
-                Write-Log -Message "Audio Service disabled: $asvc" -Level SUCCESS
-            }
-        } catch {
-            Write-Log -Message "Audio Service $asvc notice: $($_.Exception.Message)" -Level DEBUG
-        }
-    }
-
-    $audioProcesses = @("NahimicService.exe", "NahimicSvc64.exe", "NahimicAPO4Volume.exe", "nahimicNotifSys.exe", "IgoAudioService_x64.exe", "SoundTune.exe")
-    foreach ($aproc in $audioProcesses) {
-        try {
-            $procs = Get-Process -Name ($aproc -replace '\.exe$', '') -ErrorAction SilentlyContinue
-            if ($procs) {
-                & taskkill.exe /F /IM $aproc /T 2>$null | Out-Null
-                Write-Log -Message "Terminated process: $aproc" -Level SUCCESS
-            }
-        } catch {
-            # Ignore process already stopped
-        }
-    }
-
-    # Neutralize user-space Nahimic notification executable if found
-    $userNh = "$env:LOCALAPPDATA\NhNotifSys\nahimic\nahimicNotifSys.exe"
-    if (Test-Path $userNh) {
-        try {
-            Rename-Item -Path $userNh -NewName "nahimicNotifSys.exe.disabled" -Force -ErrorAction Stop
-            Write-Log -Message "Neutralized file: $userNh" -Level SUCCESS
-        } catch {
-            Write-Log -Message "Could not rename ${userNh}: $($_.Exception.Message)" -Level DEBUG
-        }
-    }
-
-    # 7. Privacy, Input Harvesting & Display Hooks
-    Write-Log -Message "[7/8] Disabling inking telemetry, address book harvesting, and display hooks..." -Level INFO
+    # 5. Privacy, Input Harvesting & Display Hooks
+    Write-Log -Message "[5/6] Disabling inking telemetry, address book harvesting, and display hooks..." -Level INFO
     Set-RegistryValueSafe "HKCU:\Software\Microsoft\InputPersonalization" "RestrictImplicitInkCollection" 1
     Set-RegistryValueSafe "HKCU:\Software\Microsoft\InputPersonalization" "RestrictImplicitTextCollection" 1
     Set-RegistryValueSafe "HKCU:\Software\Microsoft\InputPersonalization\TrainedDataStore" "HarvestContacts" 0
@@ -589,65 +808,66 @@ function Invoke-SystemRemediation {
         Set-RegistryValueSafe "HKCU:\Software\Microsoft\Windows\CurrentVersion\GameDVR" "AppCaptureEnabled" 0
     }
 
-    # 8. AppX Bloatware Purge
-    Write-Log -Message "[8/8] Purging known consumer bloatware packages..." -Level INFO
-    $bloatList = @(
-        "LGElectronics.LGMonitorApp",
-        "Microsoft.MicrosoftSolitaireCollection",
-        "Microsoft.BingTranslator",
-        "Microsoft.GetHelp",
-        "Microsoft.PowerAutomateDesktop",
-        "Microsoft.StartExperiencesApp",
-        "RivetNetworks.KillerControlCenter",
-        "AppUp.IntelOptaneMemoryandStorageManagement"
-    )
-    foreach ($pkgName in $bloatList) {
-        try {
-            $userPkgs = Get-AppxPackage "*$pkgName*" -ErrorAction SilentlyContinue
-            if ($userPkgs) {
-                foreach ($up in $userPkgs) {
-                    Remove-AppxPackage -Package $up.PackageFullName -ErrorAction Stop
-                    Write-Log -Message "Removed User AppX: $($up.Name)" -Level SUCCESS
-                }
-            }
-
-            $provPkgs = Get-AppxProvisionedPackage -Online -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName -like "*$pkgName*" }
-            if ($provPkgs) {
-                foreach ($pp in $provPkgs) {
-                    Remove-AppxProvisionedPackage -Online -PackageName $pp.PackageName -ErrorAction Stop | Out-Null
-                    Write-Log -Message "Deprovisioned System Package: $($pp.DisplayName)" -Level SUCCESS
-                }
-            }
-        } catch {
-            Write-Log -Message "Package removal notice for ${pkgName}: $($_.Exception.Message)" -Level DEBUG
-        }
-    }
+    # 6. Purge Staged & Installed Bloatware Packages
+    Write-Log -Message "[6/6] Purging installed consumer bloatware packages..." -Level INFO
+    Invoke-PurgeBloatware
 
     Write-Log -Message "Full system hardening completed successfully." -Level SUCCESS
     return $true
 }
 
 # ==============================================================================
-# 6. ENTRY POINT & EXECUTION DISPATCHER
+# 7. ENTRY POINT & EXECUTION DISPATCHER
 # ==============================================================================
 
 Write-Banner
 
 Write-Log -Message "WinSentinel session started by: $([System.Environment]::UserName) on $([System.Environment]::MachineName)" -Level INFO
 
-# 1. Execute Safety Backup if requested
+# Execute Safety Backup if requested
 if ($Backup) {
     Invoke-SystemBackup
 }
 
-# 2. Execute Audit-Only Mode if requested
+# Parameter Dispatcher
 if ($AuditOnly) {
     $auditResults = Invoke-SystemAudit
     Write-Log -Message "WinSentinel audit execution completed." -Level INFO
     exit 0
 }
 
-# 3. Execute Full Remediation if requested via parameter
+if ($BlockBloatware) {
+    if (-not (Test-IsAdmin)) {
+        Write-Log -Message "Administrator privileges are required to configure anti-bloatware policies." -Level ERROR
+        exit 1
+    }
+    Invoke-BlockFutureBloatware
+    exit 0
+}
+
+if ($PurgeBloatware) {
+    Invoke-PurgeBloatware
+    exit 0
+}
+
+if ($BlockCompanionApps) {
+    if (-not (Test-IsAdmin)) {
+        Write-Log -Message "Administrator privileges are required to configure device companion policies." -Level ERROR
+        exit 1
+    }
+    Invoke-BlockCompanionApps
+    exit 0
+}
+
+if ($NeutralizeAudio) {
+    if (-not (Test-IsAdmin)) {
+        Write-Log -Message "Administrator privileges are required to reconfigure audio services." -Level ERROR
+        exit 1
+    }
+    Invoke-NeutralizeAudio
+    exit 0
+}
+
 if ($RemediateAll) {
     try {
         Invoke-SystemRemediation
@@ -660,7 +880,7 @@ if ($RemediateAll) {
     }
 }
 
-# 4. Interactive Console Mode (default when no parameters passed)
+# Interactive Console Mode (default when no parameters passed)
 $isAdmin = Test-IsAdmin
 $adminStatus = if ($isAdmin) { "Administrator (Elevated)" } else { "Standard User (Non-Elevated)" }
 $adminColor = if ($isAdmin) { "Green" } else { "Yellow" }
@@ -668,13 +888,15 @@ Write-Host "Session Privilege Level: $adminStatus`n" -ForegroundColor $adminColo
 
 Write-Host "Select an operation:" -ForegroundColor White
 Write-Host "  [1] Run Non-Destructive System Audit (Calculates Hardening Score)" -ForegroundColor Cyan
-Write-Host "  [2] Apply Full System Hardening & Bloatware Purge (Recommended)" -ForegroundColor Cyan
-Write-Host "  [3] Create Safety Backup (System Restore Point & Registry Archives)" -ForegroundColor Cyan
-Write-Host "  [4] Neutralize Audio & Microphone Hooks Only" -ForegroundColor Cyan
-Write-Host "  [5] Apply Device Metadata & Companion App Firewall Block Only" -ForegroundColor Cyan
+Write-Host "  [2] Apply Full System Hardening & Bloatware Purge (All Vectors)" -ForegroundColor Cyan
+Write-Host "  [3] Block Future Bloatware, Store Pushes & Device Metadata (Anti-Bloat Lockdown)" -ForegroundColor Cyan
+Write-Host "  [4] Purge Installed & Provisioned Bloatware Apps Only" -ForegroundColor Cyan
+Write-Host "  [5] Neutralize Audio & Microphone Hooks Only (Nahimic / IgoAudio / SoundTune)" -ForegroundColor Cyan
+Write-Host "  [6] Apply Device Metadata & Companion App Firewall Block Only (DMRClient)" -ForegroundColor Cyan
+Write-Host "  [7] Create Safety Backup (System Restore Point & Registry Archives)" -ForegroundColor Cyan
 Write-Host "  [0] Exit" -ForegroundColor DarkGray
 
-$choice = Read-Host "`nEnter selection [0-5]"
+$choice = Read-Host "`nEnter selection [0-7]"
 
 switch ($choice) {
     "1" {
@@ -692,43 +914,32 @@ switch ($choice) {
         }
     }
     "3" {
-        Invoke-SystemBackup
+        if (-not $isAdmin) {
+            Write-Log -Message "Administrator privileges are required to apply anti-bloatware policies." -Level ERROR
+        } else {
+            Invoke-SystemBackup
+            Invoke-BlockFutureBloatware
+        }
     }
     "4" {
-        if (-not $isAdmin) {
-            Write-Log -Message "Administrator privileges required to reconfigure audio services." -Level ERROR
-        } else {
-            Write-Log -Message "Neutralizing audio services..." -Level INFO
-            $audioSvcs = @("NahimicService", "IgoAudioService")
-            foreach ($asvc in $audioSvcs) {
-                Stop-Service -Name $asvc -Force -ErrorAction SilentlyContinue
-                Set-Service -Name $asvc -StartupType Disabled -ErrorAction SilentlyContinue
-            }
-            & taskkill.exe /F /IM "NahimicService.exe" /T 2>$null | Out-Null
-            & taskkill.exe /F /IM "NahimicAPO4Volume.exe" /T 2>$null | Out-Null
-            & taskkill.exe /F /IM "nahimicNotifSys.exe" /T 2>$null | Out-Null
-            & taskkill.exe /F /IM "IgoAudioService_x64.exe" /T 2>$null | Out-Null
-            & taskkill.exe /F /IM "SoundTune.exe" /T 2>$null | Out-Null
-            Write-Log -Message "Audio and microphone interception hooks neutralized." -Level SUCCESS
-        }
+        Invoke-PurgeBloatware
     }
     "5" {
         if (-not $isAdmin) {
+            Write-Log -Message "Administrator privileges required to reconfigure audio services." -Level ERROR
+        } else {
+            Invoke-NeutralizeAudio
+        }
+    }
+    "6" {
+        if (-not $isAdmin) {
             Write-Log -Message "Administrator privileges required to modify firewall and device policies." -Level ERROR
         } else {
-            $devMeta = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Device Metadata"
-            if (-not (Test-Path $devMeta)) { New-Item -Path $devMeta -Force | Out-Null }
-            Set-ItemProperty -Path $devMeta -Name "PreventDeviceMetadataFromNetwork" -Value 1 -Type DWord
-
-            $ruleName = "Block-Windows-Device-Metadata-Retrieval"
-            New-NetFirewallRule -DisplayName $ruleName `
-                -Direction Outbound `
-                -Program "%SystemRoot%\System32\DMRClient.exe" `
-                -Action Block `
-                -Profile Any `
-                -Description "WinSentinel: Blocks automatic vendor companion app retrieval." -ErrorAction SilentlyContinue | Out-Null
-            Write-Log -Message "Device metadata retrieval blocked at policy and firewall levels." -Level SUCCESS
+            Invoke-BlockCompanionApps
         }
+    }
+    "7" {
+        Invoke-SystemBackup
     }
     Default {
         Write-Log -Message "User exited WinSentinel session." -Level INFO
