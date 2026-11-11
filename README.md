@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/winsentinel-banner.jpg" alt="WinSentinel - Windows Privacy, Telemetry Audit & System Hardening" width="100%">
+</p>
+
 # WinSentinel 🛡️
 ### Enterprise-Grade Windows Privacy, Telemetry & Bloatware Hardening Suite
 
