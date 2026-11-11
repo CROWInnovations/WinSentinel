@@ -69,7 +69,8 @@
 
 .NOTES
     Author:       WinSentinel Contributors
-    License:      MIT License
+    Copyright:    Copyright (C) 2026 CROW Innovations
+    License:      GNU General Public License v3.0 (GPL-3.0-or-later)
     Version:      2.1.0
     Requirements: PowerShell 5.1 or PowerShell 7+ running on Windows 10, 11, or Server.
 #>

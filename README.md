@@ -7,7 +7,7 @@
 
 [![PowerShell](https://img.shields.io/badge/PowerShell-5.1%20%7C%207%2B-blue.svg)](https://microsoft.com/powershell)
 [![Platform](https://img.shields.io/badge/Platform-Windows%2010%20%7C%2011%20%7C%20Server-lightgrey.svg)](https://microsoft.com/windows)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](LICENSE)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
 [![Status: Production](https://img.shields.io/badge/Status-Production%20Ready-brightgreen.svg)]()
 
 **WinSentinel** is an automated audit, telemetry de-bloat, and hardware hardening suite for **Windows 11, 10, and Windows Server (2019/2022/2025)**. It eliminates invasive OS diagnostics, background microphone/voice interception hooks, silent Store pushes, and manufacturer companion apps without breaking Windows Updates or core drivers.
@@ -89,4 +89,4 @@ Run WinSentinel programmatically across individual endpoints, Active Directory G
 ---
 
 ## 📄 License
-This project is open-source under the [MIT License](LICENSE). Maintained by [CROW Innovations](https://github.com/CROWInnovations).
+This project is open-source under the [GNU General Public License v3.0 (GPL v3)](LICENSE). Maintained by [CROW Innovations](https://github.com/CROWInnovations).
