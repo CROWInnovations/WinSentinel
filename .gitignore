@@ -1,4 +1,4 @@
-# Logs and diagnostics
+# Local logs and diagnostics
 Logs/
 *.log
 *.json
@@ -19,3 +19,6 @@ $RECYCLE.BIN/
 .idea/
 *.suo
 *.user
+
+# Local deployment helper
+push_to_github.bat
