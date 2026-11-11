@@ -26,7 +26,35 @@
 
 ---
 
-## 📋 Vectors Audited & Remediated
+## 📊 Windows 11 Telemetry, Voice & Bloatware Tracking Matrix
+
+> 📖 **In-Depth Guide:** For complete architectural diagrams, binary locations, registry keys, and transmission flow, see the **[Windows 11 Telemetry & Architecture Guide](WINDOWS-11-TELEMETRY-AUDIT.md)**.
+
+| Component / Service | Category | What It Tracks & Records | Destination / Recipient | Reference |
+| :--- | :--- | :--- | :--- | :--- |
+| **`DiagTrack`** | OS Telemetry | System crashes, app usage, hardware IDs, error dumps | Microsoft (`v10.events.data.microsoft.com`) | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#1-connected-user-experiences-and-telemetry-diagtrack) |
+| **`CompatTelRunner.exe`** | Disk Scanner | Full storage drive scan; executable hashes and driver inventory | Microsoft (Compatibility Backend) | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#1-microsoft-compatibility-appraiser-compattelrunnerexe) |
+| **`DPS` / `PcaSvc`** | Crash & Hang Logging | Monitored binary execution events, crash dumps, hang frequency | Microsoft (Diagnostics Engine) | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#2-diagnostic-policy-service-dps) |
+| **`wsqmcons.exe` (CEIP)** | Hardware Profiling | USB peripheral serials/IDs, device connection timestamps | Microsoft (CEIP Servers) | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#2-customer-experience-improvement-program-ceip--wsqmconsexe) |
+| **`DMRClient.exe`** | Companion Retrieval | Hardware IDs of connected monitors/peripherals to auto-push store apps | Microsoft (`dmd.metaservices.microsoft.com`) | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#1-device-metadata-retrieval-client-dmrclientexe) |
+| **`LGMonitorApp`** | OEM Companion App | Monitor telemetry, firmware status, display metrics | LG Electronics Servers | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#vector-3-device-metadata-retrieval--silent-companion-bloatware) |
+| **`ContentDeliveryManager`** | Ad / App Push Engine | Ad impressions, user click engagement, Start menu clicks | Microsoft (Cloud Content Relay) | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#4-content-delivery-manager--scoobe-prompts) |
+| **`AdvertisingInfo`** | User Profiling | Cross-application advertising identifier (GUID) | Microsoft Advertising Network | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#1-windows-advertising-id) |
+| **Bing Taskbar Search** | Search Tracking | Keystrokes and search queries typed into the Windows taskbar | Microsoft Bing (`bing.com`) | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#3-start-menu-web-search--bing-queries) |
+| **`HarvestContacts`** | Contact Harvesting | Address books, emails, typing vocabulary, handwriting ink | Microsoft Personalization Engine | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#2-predictive-text--contact-harvesting-harvestcontacts) |
+| **`GameDVR` / `AppCapture`** | Display / Screen Hook | Injects hooks into DirectX/Vulkan frames; records gameplay buffers | Local Disk Buffer / Xbox Live | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#vector-5-graphics-hooks--screen-recording) |
+| **`SoundTune.exe`** | Voice / Audio Filter | Real-time microphone audio stream via Audio Processing Object (APO) | Micro-Star International (MSI) / Local AI | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#1-msi-sound-tune) |
+| **`IgoAudioService`** | Voice Interception | Kernel/driver-level microphone stream for AI voice extraction | intelliGo / Realtek Driver Pipeline | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#2-intelligo-audio-service-igoaudioservice) |
+| **`NahimicService`** | Audio Processing Object | Core Audio playback and microphone capture endpoint streams | A-Volute / SteelSeries Servers | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#3-nahimic-audio-engine-nahimicservice) |
+| **`MSI Center` / Services** | OEM System Telemetry | Hardware temperatures, voltages, running game titles, UUID | Micro-Star International (MSI) | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#3-threat-vector-quick-reference-matrix) |
+| **`SteelSeries GG` (Moments)** | Screen / Audio Capture | Continuous screen recording buffer and audio capture | SteelSeries Analytics Servers | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#3-threat-vector-quick-reference-matrix) |
+| **`CrossDeviceResume.exe`** | Cross-Device Sync | Syncs clipboard text, SMS history, call logs, phone notifications | Microsoft Cloud Relay | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#1-phone-link--cross-device-host) |
+| **Edge Startup Boost** | Browser Preloader | Browser session tokens, background extensions, navigation logs | Microsoft Edge Analytics | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#2-microsoft-edge-startup-boost--autolaunch) |
+| **Ad-Supported Appx Bloat** | Sponsored Apps | Usage metrics and ad impressions (Solitaire, BingTranslator, etc.) | Microsoft & Partner Ad Networks | [Details](WINDOWS-11-TELEMETRY-AUDIT.md#3-threat-vector-quick-reference-matrix) |
+
+---
+
+## 📋 Vectors Audited & Remediated by WinSentinel
 
 | # | Threat Vector | Technical Target | What WinSentinel Does |
 | :---: | :--- | :--- | :--- |
